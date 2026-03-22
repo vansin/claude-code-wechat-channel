@@ -2,11 +2,14 @@
 /**
  * WeChat Channel Setup — standalone QR login tool.
  *
- * Run this BEFORE starting the channel to authenticate with WeChat:
- *   bun setup.ts
+ * Supports multiple WeChat accounts:
+ *   bun setup.ts              # default account
+ *   bun setup.ts work         # account named "work"
+ *   bun setup.ts friend       # account named "friend"
+ *   bun setup.ts --list       # list all saved accounts
  *
- * Credentials are saved to ~/.claude/channels/wechat/account.json.
- * The channel server reads them at startup.
+ * Credentials are saved to ~/.claude/channels/wechat/accounts/<name>.json
+ * Legacy: ~/.claude/channels/wechat/account.json (default account, backward compat)
  */
 
 import crypto from "node:crypto";
@@ -15,13 +18,23 @@ import path from "node:path";
 
 const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
 const BOT_TYPE = "3";
-const CREDENTIALS_DIR = path.join(
+const WECHAT_DIR = path.join(
   process.env.HOME || "~",
   ".claude",
   "channels",
   "wechat",
 );
-const CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "account.json");
+const ACCOUNTS_DIR = path.join(WECHAT_DIR, "accounts");
+
+// Parse CLI args
+const accountName = process.argv[2] || "default";
+const isListMode = accountName === "--list";
+
+// Account file path: accounts/<name>.json
+// Default account also writes to legacy account.json for backward compat
+const CREDENTIALS_DIR = WECHAT_DIR;
+const CREDENTIALS_FILE = path.join(ACCOUNTS_DIR, `${accountName}.json`);
+const LEGACY_FILE = path.join(WECHAT_DIR, "account.json");
 
 interface QRCodeResponse {
   qrcode: string;
@@ -69,12 +82,51 @@ async function pollQRStatus(
   }
 }
 
+function listAccounts() {
+  console.log("已保存的微信账号：\n");
+
+  // Check legacy file
+  if (fs.existsSync(LEGACY_FILE)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(LEGACY_FILE, "utf-8"));
+      console.log(`  default (legacy)  ${data.accountId}  ${data.savedAt}`);
+    } catch { /* ignore */ }
+  }
+
+  // Check accounts directory
+  if (fs.existsSync(ACCOUNTS_DIR)) {
+    const files = fs.readdirSync(ACCOUNTS_DIR).filter(f => f.endsWith(".json"));
+    for (const file of files) {
+      const name = file.replace(".json", "");
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(ACCOUNTS_DIR, file), "utf-8"));
+        console.log(`  ${name.padEnd(16)}  ${data.accountId}  ${data.savedAt}`);
+      } catch { /* ignore */ }
+    }
+    if (files.length === 0 && !fs.existsSync(LEGACY_FILE)) {
+      console.log("  (无)");
+    }
+  } else if (!fs.existsSync(LEGACY_FILE)) {
+    console.log("  (无)");
+  }
+
+  console.log("\n用法：bun setup.ts <账号名>  登录新账号");
+}
+
 async function main() {
+  // List mode
+  if (isListMode) {
+    listAccounts();
+    process.exit(0);
+  }
+
+  console.log(`账号名称: ${accountName}\n`);
+
   // Check existing credentials
   if (fs.existsSync(CREDENTIALS_FILE)) {
     try {
       const existing = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, "utf-8"));
-      console.log(`已有保存的账号: ${existing.accountId}`);
+      console.log(`已有保存的账号 [${accountName}]: ${existing.accountId}`);
       console.log(`保存时间: ${existing.savedAt}`);
       console.log();
       const readline = await import("node:readline");
@@ -144,6 +196,7 @@ async function main() {
         }
 
         const account = {
+          name: accountName,
           token: status.bot_token,
           baseUrl: status.baseurl || DEFAULT_BASE_URL,
           accountId: status.ilink_bot_id,
@@ -151,27 +204,33 @@ async function main() {
           savedAt: new Date().toISOString(),
         };
 
-        fs.mkdirSync(CREDENTIALS_DIR, { recursive: true });
+        // Save to accounts/<name>.json
+        fs.mkdirSync(ACCOUNTS_DIR, { recursive: true });
         fs.writeFileSync(
           CREDENTIALS_FILE,
           JSON.stringify(account, null, 2),
           "utf-8",
         );
-        try {
-          fs.chmodSync(CREDENTIALS_FILE, 0o600);
-        } catch {
-          // best-effort
+        try { fs.chmodSync(CREDENTIALS_FILE, 0o600); } catch { /* best-effort */ }
+
+        // Default account also writes to legacy path for backward compat
+        if (accountName === "default") {
+          fs.writeFileSync(LEGACY_FILE, JSON.stringify(account, null, 2), "utf-8");
+          try { fs.chmodSync(LEGACY_FILE, 0o600); } catch { /* best-effort */ }
         }
 
         console.log(`\n✅ 微信连接成功！`);
+        console.log(`   账号名称: ${accountName}`);
         console.log(`   账号 ID: ${account.accountId}`);
         console.log(`   用户 ID: ${account.userId}`);
         console.log(`   凭据保存至: ${CREDENTIALS_FILE}`);
         console.log();
-        console.log("现在可以启动 Claude Code 通道：");
-        console.log(
-          "  claude --dangerously-load-development-channels server:wechat",
-        );
+        console.log("启动通道：");
+        if (accountName === "default") {
+          console.log("  claude --dangerously-load-development-channels server:wechat");
+        } else {
+          console.log(`  WECHAT_ACCOUNT=${accountName} claude --dangerously-load-development-channels server:wechat`);
+        }
         process.exit(0);
       }
     }

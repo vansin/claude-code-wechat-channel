@@ -26,16 +26,21 @@ import {
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const CHANNEL_NAME = "wechat";
-const CHANNEL_VERSION = "0.1.0";
+const CHANNEL_VERSION = "0.2.0";
 const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
 const BOT_TYPE = "3";
+const WECHAT_ACCOUNT = process.env.WECHAT_ACCOUNT || "default";
 const CREDENTIALS_DIR = path.join(
   process.env.HOME || "~",
   ".claude",
   "channels",
   "wechat",
 );
-const CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "account.json");
+const ACCOUNTS_DIR = path.join(CREDENTIALS_DIR, "accounts");
+// Try accounts/<name>.json first, fallback to legacy account.json
+const CREDENTIALS_FILE = fs.existsSync(path.join(ACCOUNTS_DIR, `${WECHAT_ACCOUNT}.json`))
+  ? path.join(ACCOUNTS_DIR, `${WECHAT_ACCOUNT}.json`)
+  : path.join(CREDENTIALS_DIR, "account.json");
 
 const LONG_POLL_TIMEOUT_MS = 35_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
