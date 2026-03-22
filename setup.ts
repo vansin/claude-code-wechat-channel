@@ -12,7 +12,6 @@
  * Legacy: ~/.claude/channels/wechat/account.json (default account, backward compat)
  */
 
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -30,9 +29,7 @@ const ACCOUNTS_DIR = path.join(WECHAT_DIR, "accounts");
 const accountName = process.argv[2] || "default";
 const isListMode = accountName === "--list";
 
-// Account file path: accounts/<name>.json
-// Default account also writes to legacy account.json for backward compat
-const CREDENTIALS_DIR = WECHAT_DIR;
+// Account file paths
 const CREDENTIALS_FILE = path.join(ACCOUNTS_DIR, `${accountName}.json`);
 const LEGACY_FILE = path.join(WECHAT_DIR, "account.json");
 
