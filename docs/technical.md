@@ -5,7 +5,6 @@
 Claude Code WeChat Channel 是一个 MCP Channel 插件，将微信消息桥接到 Claude Code 会话中，实现通过微信直接与 Claude Code 交互。
 
 - 仓库：https://github.com/vansin/claude-code-wechat-channel
-- 本地路径：`~/claude-code-wechat-channel`
 - 运行时：Bun >= 1.0
 - 协议：MCP (Model Context Protocol) Channel 扩展
 - 微信接口：ClawBot ilink API（与 @tencent-weixin/openclaw-weixin 相同协议）
@@ -159,7 +158,7 @@ bun setup.ts
 ### 添加到全局 MCP
 
 ```bash
-claude mcp add -s user wechat bun /home/vansin/claude-code-wechat-channel/wechat-channel.ts
+claude mcp add -s user wechat bun /path/to/claude-code-wechat-channel/wechat-channel.ts
 ```
 
 ### 启动
@@ -192,21 +191,20 @@ claude --dangerously-load-development-channels server:wechat
                         ↓ 解析前缀
                    ┌────┼────┬────┬────┐
                    ↓    ↓    ↓    ↓    ↓
-              vincent intern ai-insight paper intern-aip
-              session session session  session session
-              ~/vincent ~/intern-ai ~/ai-insight ~/paper-fe ~/intern
+              project-a  project-b  project-c  ...
+              session    session    session
+              ~/proj-a   ~/proj-b   ~/proj-c
 ```
 
 ### 路由规则
 
 | 前缀 | 目标项目 | 工作目录 |
 |------|---------|---------|
-| /v | vansin.me | ~/vincent |
-| /i | intern-ai.org | ~/intern-ai |
-| /ai | ai-insight.org | ~/ai-insight |
-| /p | paperscope.ai | ~/paper-fe |
-| /s | intern-aip.art | ~/intern |
+| /a | Project A | ~/project-a |
+| /b | Project B | ~/project-b |
 | 无前缀 | 上次活跃的 session | - |
+
+用户可通过 `config.json` 自定义路由前缀和项目目录。
 
 ### 技术要点
 

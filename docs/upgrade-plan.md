@@ -1,7 +1,7 @@
 # Claude Code WeChat Channel 全面升级方案
 
 > 仓库：https://github.com/vansin/claude-code-wechat-channel
-> 状态：待 Vincent Review
+> 状态：待 Review
 > 日期：2026-03-22
 
 ---
@@ -31,7 +31,7 @@
 微信发消息 → 自动路由到对应项目 → Claude Code 执行 → 结果发回微信
 ```
 
-让 Vincent 在微信上就能管理所有项目，不需要打开终端。
+让用户在微信上就能管理所有项目，不需要打开终端。
 
 ---
 
@@ -43,21 +43,20 @@
 
 ```
 微信消息 → Router 中间件 → 多个 Claude -p 子进程
-                            ├── ~/vincent      (/v)
-                            ├── ~/intern-ai    (/i)
-                            ├── ~/ai-insight   (/ai)
-                            ├── ~/paper-fe     (/p)
-                            └── ~/intern       (/s)
+                            ├── ~/project-a    (/a)
+                            ├── ~/project-b    (/b)
+                            ├── ~/project-c    (/c)
+                            └── ...            (可配置)
 ```
 
 **使用方式**：
 | 命令 | 效果 |
 |------|------|
-| `/v 升级首页` | 路由到 vincent 项目 |
-| `/i 查用户数` | 路由到 intern-ai 项目 |
-| `/ai 发日报` | 路由到 ai-insight 项目 |
+| `/a 升级首页` | 路由到 project-a |
+| `/b 查用户数` | 路由到 project-b |
+| `/c 发日报` | 路由到 project-c |
 | `/status` | 查看所有 Session 状态 |
-| `/stop i` | 停止 intern-ai Session |
+| `/stop b` | 停止 project-b Session |
 | `继续` | 发到上次活跃的 Session |
 
 **技术方案**：
@@ -106,7 +105,7 @@ messages (
 ```
 用户发图片 → ilink 返回 image_item.url
   → 下载到本地 → 上传 OSS → 获得 CDN URL
-  → 传给 Claude："用户发了一张图片: https://c.vansin.top/xxx.png"
+  → 传给 Claude："用户发了一张图片: https://your-cdn.com/xxx.png"
 ```
 
 ### 模块 4：智能指令系统（P1）
@@ -115,10 +114,10 @@ messages (
 
 | 指令 | 效果 |
 |------|------|
-| `/deploy i` | 部署 intern-ai.org 到 Vercel |
-| `/deploy v` | 部署 vansin.me 到 Vercel |
-| `/build i` | 构建 intern-ai 并报告结果 |
-| `/git i` | 查看 intern-ai 最近 5 条 commit |
+| `/deploy a` | 部署 project-a 到 Vercel |
+| `/deploy b` | 部署 project-b 到 Vercel |
+| `/build a` | 构建 project-a 并报告结果 |
+| `/git a` | 查看 project-a 最近 5 条 commit |
 | `/video 主题` | 用 Remotion 生成视频 |
 | `/news` | 抓取 AI 资讯生成日报 |
 | `/stats` | 各项目线上状态汇总 |
@@ -154,7 +153,7 @@ http://localhost:8080
 └── 日志查看
 ```
 
-可以嵌入 vansin.me 的 admin 页面。
+可嵌入现有管理后台。
 
 ---
 
@@ -190,38 +189,20 @@ claude-code-wechat-channel/
 ```json
 {
   "projects": {
-    "vincent": {
-      "prefix": "/v",
-      "cwd": "/home/vansin/vincent",
-      "name": "vansin.me",
+    "my-website": {
+      "prefix": "/w",
+      "cwd": "/home/user/my-website",
+      "name": "My Website",
       "autoStart": false
     },
-    "intern-ai": {
-      "prefix": "/i",
-      "cwd": "/home/vansin/intern-ai",
-      "name": "intern-ai.org",
-      "autoStart": false
-    },
-    "ai-insight": {
-      "prefix": "/ai",
-      "cwd": "/home/vansin/ai-insight",
-      "name": "ai-insight.org",
-      "autoStart": false
-    },
-    "paper-fe": {
-      "prefix": "/p",
-      "cwd": "/home/vansin/paper-fe",
-      "name": "paperscope.ai",
-      "autoStart": false
-    },
-    "intern": {
-      "prefix": "/s",
-      "cwd": "/home/vansin/intern",
-      "name": "intern-aip.art",
+    "my-api": {
+      "prefix": "/a",
+      "cwd": "/home/user/my-api",
+      "name": "Backend API",
       "autoStart": false
     }
   },
-  "defaultProject": "vincent",
+  "defaultProject": "my-website",
   "sessionTimeout": 1800,
   "dashboard": {
     "port": 8080,
@@ -239,7 +220,7 @@ claude-code-wechat-channel/
 - [ ] 实现 router.ts 消息前缀路由
 - [ ] 实现 session-manager.ts（claude -p 子进程管理）
 - [ ] 实现 config.json 配置加载
-- [ ] 端到端测试：微信发 /v xxx 路由到 vincent
+- [ ] 端到端测试：微信发 /w xxx 路由到对应项目
 
 ### Phase 2（1 天）— 持久化 + 稳定性
 - [ ] SQLite 消息存储
@@ -292,4 +273,4 @@ nohup bun wechat-router.ts > router.log 2>&1 &
 
 文档作者：Claude Code (Team Lead)
 日期：2026-03-22
-状态：待 Review — 请 Vincent 确认后启动 Phase 1
+状态：待 Review
