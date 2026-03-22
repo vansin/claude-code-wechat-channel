@@ -84,33 +84,41 @@ async function pollQRStatus(
 
 function listAccounts() {
   console.log("已保存的微信账号：\n");
+  let count = 0;
 
-  // Check legacy file
-  if (fs.existsSync(LEGACY_FILE)) {
+  // Check accounts directory first
+  const seenNames = new Set<string>();
+  if (fs.existsSync(ACCOUNTS_DIR)) {
+    const files = fs.readdirSync(ACCOUNTS_DIR).filter(f => f.endsWith(".json")).sort();
+    for (const file of files) {
+      const name = file.replace(".json", "");
+      seenNames.add(name);
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(ACCOUNTS_DIR, file), "utf-8"));
+        console.log(`  ${name.padEnd(16)}  ${data.accountId || "unknown"}  ${data.savedAt || ""}`);
+        count++;
+      } catch { /* ignore */ }
+    }
+  }
+
+  // Show legacy file only if "default" not already in accounts/
+  if (!seenNames.has("default") && fs.existsSync(LEGACY_FILE)) {
     try {
       const data = JSON.parse(fs.readFileSync(LEGACY_FILE, "utf-8"));
-      console.log(`  default (legacy)  ${data.accountId}  ${data.savedAt}`);
+      console.log(`  default (legacy)  ${data.accountId || "unknown"}  ${data.savedAt || ""}`);
+      count++;
     } catch { /* ignore */ }
   }
 
-  // Check accounts directory
-  if (fs.existsSync(ACCOUNTS_DIR)) {
-    const files = fs.readdirSync(ACCOUNTS_DIR).filter(f => f.endsWith(".json"));
-    for (const file of files) {
-      const name = file.replace(".json", "");
-      try {
-        const data = JSON.parse(fs.readFileSync(path.join(ACCOUNTS_DIR, file), "utf-8"));
-        console.log(`  ${name.padEnd(16)}  ${data.accountId}  ${data.savedAt}`);
-      } catch { /* ignore */ }
-    }
-    if (files.length === 0 && !fs.existsSync(LEGACY_FILE)) {
-      console.log("  (无)");
-    }
-  } else if (!fs.existsSync(LEGACY_FILE)) {
+  if (count === 0) {
     console.log("  (无)");
   }
 
-  console.log("\n用法：bun setup.ts <账号名>  登录新账号");
+  console.log("\n用法：");
+  console.log("  bun setup.ts <账号名>    登录新微信号");
+  console.log("  bun setup.ts --list      查看所有账号");
+  console.log("\n启动指定账号：");
+  console.log("  WECHAT_ACCOUNT=<账号名> claude --dangerously-load-development-channels server:wechat");
 }
 
 async function main() {

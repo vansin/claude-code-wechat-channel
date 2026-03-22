@@ -37,10 +37,19 @@ const CREDENTIALS_DIR = path.join(
   "wechat",
 );
 const ACCOUNTS_DIR = path.join(CREDENTIALS_DIR, "accounts");
-// Try accounts/<name>.json first, fallback to legacy account.json
-const CREDENTIALS_FILE = fs.existsSync(path.join(ACCOUNTS_DIR, `${WECHAT_ACCOUNT}.json`))
-  ? path.join(ACCOUNTS_DIR, `${WECHAT_ACCOUNT}.json`)
-  : path.join(CREDENTIALS_DIR, "account.json");
+
+// Resolve credentials file: accounts/<name>.json > legacy account.json (default only)
+function resolveCredentialsFile(): string {
+  const accountFile = path.join(ACCOUNTS_DIR, `${WECHAT_ACCOUNT}.json`);
+  if (fs.existsSync(accountFile)) return accountFile;
+  // Only fallback to legacy file for "default" account
+  if (WECHAT_ACCOUNT === "default") {
+    const legacyFile = path.join(CREDENTIALS_DIR, "account.json");
+    if (fs.existsSync(legacyFile)) return legacyFile;
+  }
+  return accountFile; // Will trigger "not found" during login
+}
+const CREDENTIALS_FILE = resolveCredentialsFile();
 
 const LONG_POLL_TIMEOUT_MS = 35_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
@@ -322,7 +331,7 @@ const MSG_STATE_FINISH = 2;
 // ── CDN Media Download + AES Decrypt ─────────────────────────────────────────
 
 const CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
-const MEDIA_DIR = path.join(CREDENTIALS_DIR, "media");
+const MEDIA_DIR = path.join(CREDENTIALS_DIR, "media", WECHAT_ACCOUNT);
 
 function decryptAesEcb(ciphertext: Buffer, key: Buffer): Buffer {
   const decipher = crypto.createDecipheriv("aes-128-ecb", key, null);
@@ -690,7 +699,7 @@ async function startPolling(account: AccountData): Promise<never> {
   let consecutiveFailures = 0;
 
   // Load cached sync buf if available
-  const syncBufFile = path.join(CREDENTIALS_DIR, "sync_buf.txt");
+  const syncBufFile = path.join(CREDENTIALS_DIR, `sync_buf_${WECHAT_ACCOUNT}.txt`);
   try {
     if (fs.existsSync(syncBufFile)) {
       getUpdatesBuf = fs.readFileSync(syncBufFile, "utf-8");
@@ -819,7 +828,7 @@ async function main() {
       process.exit(1);
     }
   } else {
-    log(`使用已保存账号: ${account.accountId}`);
+    log(`使用已保存账号 [${WECHAT_ACCOUNT}]: ${account.accountId} (${CREDENTIALS_FILE})`);
   }
 
   activeAccount = account;
