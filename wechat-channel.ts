@@ -265,10 +265,18 @@ interface RefMessage {
   title?: string;
 }
 
+interface ImageItem {
+  url?: string;
+  media_id?: string;
+  aes_key?: string;
+  file_size?: number;
+}
+
 interface MessageItem {
   type?: number;
   text_item?: TextItem;
   voice_item?: { text?: string };
+  image_item?: ImageItem;
   ref_msg?: RefMessage;
 }
 
@@ -296,27 +304,51 @@ interface GetUpdatesResp {
 // Message type constants
 const MSG_TYPE_USER = 1;
 const MSG_ITEM_TEXT = 1;
+const MSG_ITEM_IMAGE = 2;
 const MSG_ITEM_VOICE = 3;
 const MSG_TYPE_BOT = 2;
 const MSG_STATE_FINISH = 2;
 
-function extractTextFromMessage(msg: WeixinMessage): string {
-  if (!msg.item_list?.length) return "";
+function extractContentFromMessage(msg: WeixinMessage): { text: string; imageUrls: string[] } {
+  const imageUrls: string[] = [];
+  let text = "";
+
+  if (!msg.item_list?.length) return { text, imageUrls };
+
   for (const item of msg.item_list) {
     if (item.type === MSG_ITEM_TEXT && item.text_item?.text) {
-      const text = item.text_item.text;
+      const t = item.text_item.text;
       const ref = item.ref_msg;
-      if (!ref) return text;
-      const parts: string[] = [];
-      if (ref.title) parts.push(ref.title);
-      if (!parts.length) return text;
-      return `[引用: ${parts.join(" | ")}]\n${text}`;
+      if (!ref) {
+        text = t;
+      } else {
+        const parts: string[] = [];
+        if (ref.title) parts.push(ref.title);
+        text = parts.length ? `[引用: ${parts.join(" | ")}]\n${t}` : t;
+      }
+    }
+    if (item.type === MSG_ITEM_IMAGE && item.image_item) {
+      const url = item.image_item.url;
+      if (url) imageUrls.push(url);
     }
     if (item.type === MSG_ITEM_VOICE && item.voice_item?.text) {
-      return item.voice_item.text;
+      text = item.voice_item.text;
     }
   }
-  return "";
+
+  return { text, imageUrls };
+}
+
+// Backward-compat wrapper
+function extractTextFromMessage(msg: WeixinMessage): string {
+  const { text, imageUrls } = extractContentFromMessage(msg);
+  if (imageUrls.length > 0 && !text) {
+    return `[用户发送了${imageUrls.length}张图片]\n${imageUrls.map(u => `图片: ${u}`).join("\n")}`;
+  }
+  if (imageUrls.length > 0 && text) {
+    return `${text}\n${imageUrls.map(u => `[附图: ${u}]`).join("\n")}`;
+  }
+  return text;
 }
 
 // ── Context Token Cache ──────────────────────────────────────────────────────
@@ -391,6 +423,35 @@ async function sendTextMessage(
   return clientId;
 }
 
+async function sendImageMessage(
+  baseUrl: string,
+  token: string,
+  to: string,
+  imageUrl: string,
+  contextToken: string,
+): Promise<string> {
+  const clientId = generateClientId();
+  await apiFetch({
+    baseUrl,
+    endpoint: "ilink/bot/sendmessage",
+    body: JSON.stringify({
+      msg: {
+        from_user_id: "",
+        to_user_id: to,
+        client_id: clientId,
+        message_type: MSG_TYPE_BOT,
+        message_state: MSG_STATE_FINISH,
+        item_list: [{ type: MSG_ITEM_IMAGE, image_item: { url: imageUrl } }],
+        context_token: contextToken,
+      },
+      base_info: { channel_version: CHANNEL_VERSION },
+    }),
+    token,
+    timeoutMs: 15_000,
+  });
+  return clientId;
+}
+
 // ── MCP Channel Server ──────────────────────────────────────────────────────
 
 const mcp = new Server(
@@ -402,8 +463,10 @@ const mcp = new Server(
     },
     instructions: [
       `Messages from WeChat users arrive as <channel source="wechat" sender="..." sender_id="...">`,
-      "Reply using the wechat_reply tool. You MUST pass the sender_id from the inbound tag.",
+      "Reply using the wechat_reply tool for text, or wechat_reply_image for images.",
+      "You MUST pass the sender_id from the inbound tag.",
       "Messages are from real WeChat users via the WeChat ClawBot interface.",
+      "When a user sends an image, the message will contain the image URL. You can analyze it or reference it.",
       "Respond naturally in Chinese unless the user writes in another language.",
       "Keep replies concise — WeChat is a chat app, not an essay platform.",
       "Strip markdown formatting (WeChat doesn't render it). Use plain text.",
@@ -411,7 +474,7 @@ const mcp = new Server(
   },
 );
 
-// Tool: reply to WeChat
+// Tools: reply to WeChat (text + image)
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
@@ -431,6 +494,25 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
         },
         required: ["sender_id", "text"],
+      },
+    },
+    {
+      name: "wechat_reply_image",
+      description: "Send an image reply back to the WeChat user. Provide a publicly accessible image URL.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          sender_id: {
+            type: "string",
+            description:
+              "The sender_id from the inbound <channel> tag (xxx@im.wechat format)",
+          },
+          image_url: {
+            type: "string",
+            description: "The publicly accessible URL of the image to send",
+          },
+        },
+        required: ["sender_id", "image_url"],
       },
     },
   ],
@@ -477,6 +559,45 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       };
     }
   }
+  if (req.params.name === "wechat_reply_image") {
+    const { sender_id, image_url } = req.params.arguments as {
+      sender_id: string;
+      image_url: string;
+    };
+    if (!activeAccount) {
+      return {
+        content: [{ type: "text" as const, text: "error: not logged in" }],
+      };
+    }
+    const contextToken = getCachedContextToken(sender_id);
+    if (!contextToken) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `error: no context_token for ${sender_id}. The user may need to send a message first.`,
+          },
+        ],
+      };
+    }
+    try {
+      await sendImageMessage(
+        activeAccount.baseUrl,
+        activeAccount.token,
+        sender_id,
+        image_url,
+        contextToken,
+      );
+      return { content: [{ type: "text" as const, text: "image sent" }] };
+    } catch (err) {
+      return {
+        content: [
+          { type: "text" as const, text: `image send failed: ${String(err)}` },
+        ],
+      };
+    }
+  }
+
   throw new Error(`unknown tool: ${req.params.name}`);
 });
 
