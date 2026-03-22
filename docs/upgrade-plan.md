@@ -100,23 +100,44 @@ wechat-channel.ts:
 - 长任务完成 → 主动推送结果
 - 正在处理 → 有状态提示
 
-#### 即时确认
+#### "正在输入" 状态指示器
 
+ilink API 提供了原生的"正在输入"状态显示（类似微信对话框顶部的"对方正在输入..."提示），**不是**发一条消息，而是显示原生 typing 状态。
+
+**API 调研结果**：
+
+ilink 提供两个相关接口：
+1. `POST /ilink/bot/getconfig` — 获取 `typing_ticket`（typing 认证令牌）
+2. `POST /ilink/bot/sendtyping` — 发送"正在输入"状态（需要 `typing_ticket`）
+
+**实现流程**：
 ```
-用户发消息
+启动时/定期：
+  POST /ilink/bot/getconfig → 获取 typing_ticket 并缓存
   ↓
-wechat-channel.ts 收到
-  ↓ 立即发送
-"收到，处理中..." （不等 Claude 响应）
-  ↓ 同时
-转发给 Claude Code Session
+收到用户消息：
+  POST /ilink/bot/sendtyping (携带 typing_ticket)
+  → 用户看到"对方正在输入..."
   ↓
-Claude 回复后正常发送完整回复
+每 5 秒重复发送 sendtyping（typing 状态约 5-6 秒后过期）
+  → setInterval 保持 typing 状态
+  ↓
+Claude 回复后：
+  clearInterval 停止发送 typing
+  → 发送正式回复
 ```
 
 **实现要点**：
-- 在 `startPolling()` 处理消息时，先调用 `sendTextMessage()` 发确认
-- 确认消息可配置：`config.ackMessage = "收到，处理中..."`
+- 启动时调用 `getconfig` 获取 `typing_ticket` 并缓存
+- `typing_ticket` 可能有有效期，需定期刷新
+- 使用 `setInterval(sendTyping, 5000)` 保持 typing 状态
+- Claude 回复后 `clearInterval` 停止
+- 参考 OpenClaw 的 `typingIntervalSeconds: 6` 默认配置
+
+#### 即时文字确认（备选）
+
+如果 sendtyping API 调用失败或不可用，降级为发一条文字消息：
+- 在 `startPolling()` 处理消息时，先调用 `sendTextMessage()` 发"收到，处理中..."
 - 可选：对短消息（如"好"、"嗯"）不发确认
 
 #### 主动通知
