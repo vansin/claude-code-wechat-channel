@@ -24,7 +24,7 @@ Claude Code ← MCP Channel Protocol ← wechat_reply tool
 ### 1. 安装依赖
 
 ```bash
-git clone https://github.com/anthropics/claude-code-wechat-channel.git
+git clone https://github.com/vansin/claude-code-wechat-channel.git
 cd claude-code-wechat-channel
 bun install
 ```
