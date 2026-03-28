@@ -345,6 +345,15 @@ function decryptAesEcb(ciphertext: Buffer, key: Buffer): Buffer {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }
 
+function encryptAesEcb(plaintext: Buffer, key: Buffer): Buffer {
+  const cipher = crypto.createCipheriv("aes-128-ecb", key, null);
+  return Buffer.concat([cipher.update(plaintext), cipher.final()]);
+}
+
+function aesEcbPaddedSize(plaintextSize: number): number {
+  return Math.ceil((plaintextSize + 1) / 16) * 16;
+}
+
 function parseAesKey(aesKeyBase64: string): Buffer {
   const decoded = Buffer.from(aesKeyBase64, "base64");
   if (decoded.length === 16) return decoded;
@@ -520,32 +529,149 @@ async function sendTextMessage(
   return clientId;
 }
 
-async function sendImageMessage(
+async function uploadImageToCdn(
   baseUrl: string,
   token: string,
-  to: string,
-  imageUrl: string,
-  contextToken: string,
-): Promise<string> {
-  const clientId = generateClientId();
-  await apiFetch({
+  toUserId: string,
+  imagePath: string,
+): Promise<{ downloadParam: string; aeskey: string; fileSize: number; fileSizeCiphertext: number }> {
+  // Read image file
+  let plaintext: Buffer;
+  if (imagePath.startsWith("http://") || imagePath.startsWith("https://")) {
+    // Download from URL first
+    log(`image upload: downloading from ${imagePath.slice(0, 60)}...`);
+    const res = await fetch(imagePath);
+    if (!res.ok) throw new Error(`Failed to download image: ${res.status}`);
+    plaintext = Buffer.from(await res.arrayBuffer());
+  } else {
+    plaintext = fs.readFileSync(imagePath);
+  }
+
+  const rawsize = plaintext.length;
+  const rawfilemd5 = crypto.createHash("md5").update(plaintext).digest("hex");
+  const filesize = aesEcbPaddedSize(rawsize);
+  const filekey = crypto.randomBytes(16).toString("hex");
+  const aeskey = crypto.randomBytes(16);
+
+  log(`image upload: rawsize=${rawsize} filesize=${filesize} md5=${rawfilemd5}`);
+
+  // Step 1: Get upload URL
+  const uploadUrlRaw = await apiFetch({
     baseUrl,
-    endpoint: "ilink/bot/sendmessage",
+    endpoint: "ilink/bot/getuploadurl",
     body: JSON.stringify({
-      msg: {
-        from_user_id: "",
-        to_user_id: to,
-        client_id: clientId,
-        message_type: MSG_TYPE_BOT,
-        message_state: MSG_STATE_FINISH,
-        item_list: [{ type: MSG_ITEM_IMAGE, image_item: { url: imageUrl } }],
-        context_token: contextToken,
-      },
+      filekey,
+      media_type: 1, // IMAGE
+      to_user_id: toUserId,
+      rawsize,
+      rawfilemd5,
+      filesize,
+      no_need_thumb: true,
+      aeskey: aeskey.toString("hex"),
       base_info: { channel_version: CHANNEL_VERSION },
     }),
     token,
     timeoutMs: 15_000,
   });
+  const uploadUrlResp = JSON.parse(uploadUrlRaw);
+  const uploadParam = uploadUrlResp.upload_param;
+  if (!uploadParam) {
+    throw new Error(`getUploadUrl returned no upload_param: ${uploadUrlRaw}`);
+  }
+
+  // Step 2: Encrypt and upload to CDN
+  const ciphertext = encryptAesEcb(plaintext, aeskey);
+  const cdnUrl = `${CDN_BASE_URL}/upload?encrypted_query_param=${encodeURIComponent(uploadParam)}&filekey=${encodeURIComponent(filekey)}`;
+  log(`image upload: uploading ${ciphertext.length} bytes to CDN...`);
+
+  const cdnRes = await fetch(cdnUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: new Uint8Array(ciphertext),
+  });
+  if (!cdnRes.ok) {
+    const errMsg = cdnRes.headers.get("x-error-message") || `status ${cdnRes.status}`;
+    throw new Error(`CDN upload failed: ${errMsg}`);
+  }
+  const downloadParam = cdnRes.headers.get("x-encrypted-param");
+  if (!downloadParam) {
+    throw new Error("CDN response missing x-encrypted-param header");
+  }
+
+  log(`image upload: CDN upload success`);
+  return {
+    downloadParam,
+    aeskey: aeskey.toString("hex"),
+    fileSize: rawsize,
+    fileSizeCiphertext: filesize,
+  };
+}
+
+async function sendImageMessage(
+  baseUrl: string,
+  token: string,
+  to: string,
+  imageSource: string,
+  contextToken: string,
+): Promise<string> {
+  const clientId = generateClientId();
+
+  try {
+    // Upload to WeChat CDN with AES encryption
+    const uploaded = await uploadImageToCdn(baseUrl, token, to, imageSource);
+
+    await apiFetch({
+      baseUrl,
+      endpoint: "ilink/bot/sendmessage",
+      body: JSON.stringify({
+        msg: {
+          from_user_id: "",
+          to_user_id: to,
+          client_id: clientId,
+          message_type: MSG_TYPE_BOT,
+          message_state: MSG_STATE_FINISH,
+          item_list: [{
+            type: MSG_ITEM_IMAGE,
+            image_item: {
+              media: {
+                encrypt_query_param: uploaded.downloadParam,
+                aes_key: Buffer.from(uploaded.aeskey, "hex").toString("base64"),
+              },
+              aeskey: uploaded.aeskey,
+              hd_size: uploaded.fileSizeCiphertext,
+              mid_size: uploaded.fileSizeCiphertext,
+            },
+          }],
+          context_token: contextToken,
+        },
+        base_info: { channel_version: CHANNEL_VERSION },
+      }),
+      token,
+      timeoutMs: 15_000,
+    });
+    log(`image sent via CDN to ${to}`);
+  } catch (err) {
+    logError(`CDN image upload failed: ${String(err)}, falling back to URL mode`);
+    // Fallback: try sending URL directly (may not work)
+    await apiFetch({
+      baseUrl,
+      endpoint: "ilink/bot/sendmessage",
+      body: JSON.stringify({
+        msg: {
+          from_user_id: "",
+          to_user_id: to,
+          client_id: clientId,
+          message_type: MSG_TYPE_BOT,
+          message_state: MSG_STATE_FINISH,
+          item_list: [{ type: MSG_ITEM_IMAGE, image_item: { url: imageSource } }],
+          context_token: contextToken,
+        },
+        base_info: { channel_version: CHANNEL_VERSION },
+      }),
+      token,
+      timeoutMs: 15_000,
+    });
+  }
   return clientId;
 }
 
